@@ -1,0 +1,54 @@
+compression:
+  audio_bitrate: 128k
+  audio_codec: aac
+  codec: libx265
+  crf: 28
+  downscale: false
+  enabled: true
+  preset: ultrafast
+  target_resolution: 1920:1080
+  quality: 85  # JPEG compression quality for frame-level compression
+input_videos:
+- path: videos/sample_video_1.mp4
+  stream_id: sample_stream_1
+- path: videos/sample_video_2.mp4
+  stream_id: sample_stream_2
+- path: videos/sample_video_3.mp4
+  stream_id: sample_stream_3
+- path: videos/sample_video_4.mp4
+  stream_id: sample_stream_4
+- path: videos/sample_video_5.mp4
+  stream_id: sample_stream_5
+logging:
+  console_output: true
+  level: INFO
+  log_file: logs/pipeline.log
+mlflow:
+  enabled: true
+  experiment_name: object_detection_pipeline
+  log_metrics_interval: 10
+  log_model: true
+  log_sample_frames: true
+  sample_frame_interval: 100
+  tracking_uri: mlruns
+model:
+  confidence_threshold: 0.5
+  device: cpu
+  iou_threshold: 0.45
+  max_detections: 100
+  name: yolo11s.pt
+output:
+  base_path: output
+  compressed_videos_path: output/compressed
+  detection_videos_path: output/detections
+  display_realtime: true
+  fps_overlay: true
+  frames_path: output/frames
+  save_detection_videos: true
+  save_compressed_videos: true  # Enable saving compressed videos
+  save_sample_frames: true
+performance:
+  batch_size: 1
+  frame_buffer_size: 200  # Increased buffer size for concurrent compression + detection
+  gpu_memory_fraction: 0.8
+  max_workers: 5
