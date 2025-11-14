@@ -59,14 +59,35 @@ For each video stream:
 git clone <repository-url>
 cd Theft_Detection_Bacancy
 
-# Setup environment
-python3 -m venv venv
-source venv/bin/activate  # Linux/Mac
-# venv\Scripts\activate   # Windows
+# Install dependencies using uv
+uv sync
 
-# Install dependencies
-pip install -r requirements.txt
+# Note: uv automatically manages the virtual environment
 ```
+
+#### Package Management with UV
+
+Managing dependencies is simple with uv:
+
+```bash
+# Add a new package (uv manages version automatically)
+uv add package-name
+
+# Add a package with specific version
+uv add package-name==1.2.3
+
+# Remove a package
+uv remove package-name
+
+# Update all packages
+uv sync --upgrade
+```
+
+**Benefits:**
+- 🎯 UV automatically resolves compatible versions
+- 📦 Updates `pyproject.toml` and `uv.lock` automatically
+- 🔄 No need to manually edit dependency files
+- ⚡ Fast dependency resolution and installation
 
 ### 2. Configuration
 ```bash
@@ -77,13 +98,13 @@ nano config.yaml
 ### 3. Run Pipeline
 ```bash
 # Validate configuration
-python3 main.py --validate
+uv run main.py --validate
 
 # Run with parallel processing (recommended)
-python3 main.py --parallel-mode threading --gpu cpu
+uv run main.py --parallel-mode threading --gpu cpu
 
 # Run with GPU (if available)
-python3 main.py --parallel-mode threading --gpu cuda
+uv run main.py --parallel-mode threading --gpu cuda
 ```
 
 ## 📁 Project Structure
@@ -92,7 +113,9 @@ python3 main.py --parallel-mode threading --gpu cuda
 Theft_Detection_Bacancy/
 ├── 📄 main.py                 # Complete E2E pipeline (single file)
 ├── ⚙️  config.yaml            # Configuration file
-├── 📋 requirements.txt        # Python dependencies
+├── 📦 pyproject.toml         # Project dependencies and metadata
+├── 🔒 uv.lock                # Dependency lock file
+├── 📋 requirements.txt        # Legacy pip dependencies (for reference)
 ├── 📖 README.md              # This file
 ├── 🛠️  INSTALLATION.md        # Detailed installation guide
 ├── 📁 videos/                # Input videos directory
@@ -150,30 +173,30 @@ performance:
 ### Basic Usage
 ```bash
 # Process videos with default settings
-python3 main.py
+uv run main.py
 
 # Use specific configuration file
-python3 main.py --config custom_config.yaml
+uv run main.py --config custom_config.yaml
 
 # Run without MLflow tracking
-python3 main.py --no-mlflow
+uv run main.py --no-mlflow
 ```
 
 ### Advanced Usage
 ```bash
 # Sequential processing (for debugging)
-python3 main.py --parallel-mode sequential
+uv run main.py --parallel-mode sequential
 
 # GPU processing with custom config
-python3 main.py --gpu cuda --config gpu_config.yaml
+uv run main.py --gpu cuda --config gpu_config.yaml
 
 # Validation only (no processing)
-python3 main.py --validate
+uv run main.py --validate
 ```
 
 ### Command Line Options
 ```bash
-python3 main.py [OPTIONS]
+uv run main.py [OPTIONS]
 
 Options:
   --config PATH              Configuration file path (default: config.yaml)
@@ -320,11 +343,11 @@ model:
 ### Debug Mode
 ```bash
 # Enable debug logging
-python3 main.py --log-level DEBUG
+uv run main.py --log-level DEBUG
 
 # Run single video for testing
 # Edit config.yaml to include only one video
-python3 main.py --parallel-mode sequential
+uv run main.py --parallel-mode sequential
 ```
 
 ## 📈 Performance Benchmarks
@@ -351,15 +374,15 @@ python3 main.py --parallel-mode sequential
 
 ### Development Setup
 ```bash
-# Install development dependencies
-pip install -r requirements.txt
+# Install dependencies
+uv sync
 
 # Run tests
-python3 -m pytest tests/
+uv run pytest tests/
 
 # Code formatting
-black main.py
-flake8 main.py
+uv run black main.py
+uv run flake8 main.py
 ```
 
 ### Adding Features
@@ -393,20 +416,19 @@ For support and questions:
 
 ```bash
 # Setup
-python3 -m venv venv && source venv/bin/activate
-pip install -r requirements.txt
+uv sync
 
 # Validate
-python3 main.py --validate
+uv run main.py --validate
 
 # Run (CPU)
-python3 main.py --parallel-mode threading --gpu cpu
+uv run main.py --parallel-mode threading --gpu cpu
 
 # Run (GPU)
-python3 main.py --parallel-mode threading --gpu cuda
+uv run main.py --parallel-mode threading --gpu cuda
 
 # Debug
-python3 main.py --log-level DEBUG --parallel-mode sequential
+uv run main.py --log-level DEBUG --parallel-mode sequential
 
 # Check Results
 ls -la output/compressed/ output/detections/
