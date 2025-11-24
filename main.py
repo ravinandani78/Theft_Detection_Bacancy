@@ -69,8 +69,10 @@ class ObjectDetector:
         self.config = config
         self.model_config = config.get('model', {})
         
-        # Model parameters
-        self.model_name = self.model_config.get('name', 'yolo11s.pt')
+        # Model parameters - track model directory instead of specific filename
+        self.model_directory = Path(self.model_config.get('directory', 'model'))
+        model_name_config = self.model_config.get('name')
+        self.model_path = self._find_model_path(model_name_config)
         self.device = self.model_config.get('device', 'cuda' if torch.cuda.is_available() else 'cpu')
         self.confidence_threshold = self.model_config.get('confidence_threshold', 0.5)
         self.iou_threshold = self.model_config.get('iou_threshold', 0.45)
@@ -87,11 +89,49 @@ class ObjectDetector:
         else:
             logger.warning("YOLO not available - detection will be simulated")
     
+    def _find_model_path(self, model_name: Optional[str] = None) -> str:
+        """
+        Resolve the model file path. If none specified, automatically use the first
+        .pt file present in the configured model directory.
+        
+        Args:
+            model_name: Model name or path from config
+            
+        Returns:
+            Path to the model file
+        """
+        # If explicit model path exists, use it directly
+        if model_name:
+            model_path = Path(model_name)
+            if model_path.exists():
+                return str(model_path)
+            # If relative path doesn't exist, try within configured directory
+            model_path = self.model_directory / model_path.name
+            if model_path.exists():
+                return str(model_path)
+        
+        # Auto-discover first .pt file within configured directory
+        if self.model_directory.exists():
+            pt_files = sorted(self.model_directory.glob('*.pt'))
+            if pt_files:
+                model_file = pt_files[0]
+                logger.info(f"Auto-detected model in directory {self.model_directory}: {model_file}")
+                return str(model_file)
+        
+        # Fallback: if nothing found, return the original name or raise error
+        if model_name:
+            return model_name
+        
+        raise FileNotFoundError(
+            "No model file found. Please ensure a .pt model file exists in the 'model' folder "
+            "or specify the model path in config.yaml"
+        )
+    
     def _load_model(self):
         """Load YOLOv11 model."""
         try:
-            logger.info(f"Loading YOLOv11 model: {self.model_name}")
-            self.model = YOLO(self.model_name)
+            logger.info(f"Loading YOLOv11 model from: {self.model_path}")
+            self.model = YOLO(self.model_path)
             
             if self.device != 'cpu':
                 self.model.to(self.device)
@@ -100,7 +140,7 @@ class ObjectDetector:
             logger.info(f"Model loaded successfully on {self.device}")
             
         except Exception as e:
-            logger.error(f"Failed to load model {self.model_name}: {e}")
+            logger.error(f"Failed to load model {self.model_path}: {e}")
             raise
     
     def _setup_visualization(self):
@@ -596,8 +636,7 @@ class E2EPipeline:
         self._initialize_components(enable_mlflow)
         
         # Signal handlers
-        signal.signal(signal.SIGINT, self._signal_handler)
-        signal.signal(signal.SIGTERM, self._signal_handler)
+        self._register_signal_handlers()
     
     def _load_config(self) -> Dict[str, Any]:
         """Load configuration from YAML file."""
@@ -634,6 +673,18 @@ class E2EPipeline:
             logger.error(f"Failed to initialize components: {e}")
             raise
     
+    def _register_signal_handlers(self):
+        """Register shutdown signal handlers when running on the main thread."""
+        if threading.current_thread() is threading.main_thread():
+            try:
+                signal.signal(signal.SIGINT, self._signal_handler)
+                signal.signal(signal.SIGTERM, self._signal_handler)
+                logger.debug("Signal handlers registered on main thread")
+            except Exception as exc:
+                logger.warning(f"Unable to register signal handlers: {exc}")
+        else:
+            logger.debug("Skipping signal handler registration (not running on main thread)")
+    
     def _signal_handler(self, signum, frame):
         """Handle shutdown signals gracefully."""
         logger.info(f"Received signal {signum}, initiating graceful shutdown...")
@@ -653,7 +704,7 @@ class E2EPipeline:
                 'pipeline_version': '4.0.0',
                 'processing_mode': self.parallel_mode,
                 'num_streams': str(len(self.config.get('input_videos', []))),
-                'model': self.config.get('model', {}).get('name', 'yolo11s.pt'),
+                'model_directory': self.config.get('model', {}).get('directory', 'model'),
                 'device': self.config.get('model', {}).get('device', 'cpu')
             }
             self.mlflow_logger.start_run(tags=run_tags)
@@ -981,8 +1032,21 @@ def validate_configuration(config_path: str) -> bool:
         
         # Check model configuration
         model_config = config.get('model', {})
-        model_name = model_config.get('name', 'yolo11s.pt')
-        logger.info(f"Model configured: {model_name}")
+        model_directory = Path(model_config.get('directory', 'model'))
+        if not model_directory.exists():
+            logger.error(f"Model directory not found: {model_directory}")
+            return False
+        
+        pt_files = sorted(model_directory.glob('*.pt'))
+        model_override = model_config.get('name')
+        if not pt_files and not model_override:
+            logger.error(f"No .pt files found in model directory: {model_directory}")
+            return False
+        
+        if model_override:
+            logger.info(f"Model override provided: {model_override}")
+        else:
+            logger.info(f"Model directory configured: {model_directory} (auto-selecting latest .pt)")
         
         logger.info("✅ Configuration validation passed")
         return True
