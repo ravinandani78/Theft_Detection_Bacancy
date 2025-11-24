@@ -63,9 +63,20 @@ class PipelineManager:
         self._setup_output_directories()
         self._initialize_components()
         
-        # Setup signal handlers for graceful shutdown
-        signal.signal(signal.SIGINT, self._signal_handler)
-        signal.signal(signal.SIGTERM, self._signal_handler)
+        # Setup signal handlers for graceful shutdown (only if running on main thread)
+        self._register_signal_handlers()
+
+    def _register_signal_handlers(self):
+        """Register signal handlers when running on the main interpreter thread."""
+        if threading.current_thread() is threading.main_thread():
+            try:
+                signal.signal(signal.SIGINT, self._signal_handler)
+                signal.signal(signal.SIGTERM, self._signal_handler)
+                logger.debug("Signal handlers registered on main thread")
+            except Exception as exc:
+                logger.warning(f"Unable to register signal handlers: {exc}")
+        else:
+            logger.debug("Skipping signal handler registration (not running on main thread)")
     
     def _load_config(self) -> Dict[str, Any]:
         """
@@ -161,7 +172,7 @@ class PipelineManager:
             run_tags = {
                 'pipeline_version': '1.0.0',
                 'num_streams': str(len(self.config.get('input_videos', []))),
-                'model': self.config.get('model', {}).get('name', 'yolo11s.pt')
+                'model_directory': self.config.get('model', {}).get('directory', 'model')
             }
             self.mlflow_logger.start_run(tags=run_tags)
             

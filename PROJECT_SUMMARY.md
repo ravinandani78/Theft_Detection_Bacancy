@@ -149,7 +149,8 @@ input_videos:
 
 # Model Configuration
 model:
-  name: yolo11s.pt
+  directory: model               # Folder containing YOLO checkpoints
+  # name: custom_model.pt        # Optional explicit override
   device: cpu                    # or 'cuda'
   confidence_threshold: 0.5
   iou_threshold: 0.45

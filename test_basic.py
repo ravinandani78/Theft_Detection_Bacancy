@@ -29,10 +29,12 @@ def test_config_loading():
                 print(f"❌ Missing config section: {section}")
                 return False
         
+        model_cfg = config.get('model', {})
+        model_source = model_cfg.get('name') or model_cfg.get('directory')
         print(f"✅ Configuration loaded successfully")
         print(f"   - {len(config['input_videos'])} video streams configured")
-        print(f"   - Model: {config['model']['name']}")
-        print(f"   - Device: {config['model']['device']}")
+        print(f"   - Model source: {model_source}")
+        print(f"   - Device: {model_cfg.get('device')}")
         return True
         
     except Exception as e:
