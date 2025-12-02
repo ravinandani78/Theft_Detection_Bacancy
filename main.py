@@ -100,17 +100,27 @@ class ObjectDetector:
         Returns:
             Path to the model file
         """
-        # If explicit model path exists, use it directly
+        # If explicit model path is provided, it MUST exist on disk
         if model_name:
             model_path = Path(model_name)
+            # Allow absolute or relative explicit path
             if model_path.exists():
+                logger.info(f"Using explicit model path from config: {model_path}")
                 return str(model_path)
-            # If relative path doesn't exist, try within configured directory
+            # Or look for that filename strictly inside the configured model directory
             model_path = self.model_directory / model_path.name
             if model_path.exists():
+                logger.info(f"Using model from configured directory: {model_path}")
                 return str(model_path)
+            
+            # Do NOT fall back to any built‑in YOLO model names
+            raise FileNotFoundError(
+                f"Configured model '{model_name}' not found. "
+                f"Expected at '{model_name}' or '{self.model_directory / Path(model_name).name}'. "
+                "Only local .pt files from the configured model directory are allowed."
+            )
         
-        # Auto-discover first .pt file within configured directory
+        # No explicit name: auto-discover first .pt file strictly within configured directory
         if self.model_directory.exists():
             pt_files = sorted(self.model_directory.glob('*.pt'))
             if pt_files:
@@ -118,13 +128,10 @@ class ObjectDetector:
                 logger.info(f"Auto-detected model in directory {self.model_directory}: {model_file}")
                 return str(model_file)
         
-        # Fallback: if nothing found, return the original name or raise error
-        if model_name:
-            return model_name
-        
+        # Nothing found in the directory and no explicit name
         raise FileNotFoundError(
-            "No model file found. Please ensure a .pt model file exists in the 'model' folder "
-            "or specify the model path in config.yaml"
+            f"No model file found in directory '{self.model_directory}'. "
+            "Please place a .pt weights file there or set model.name to an existing local path."
         )
     
     def _load_model(self):
@@ -360,24 +367,32 @@ class VideoStreamProcessor:
             self.compressed_output_file = compressed_path / f"{self.stream_id}_compressed.mp4"
     
     def process_video_complete(self, video_path: str) -> bool:
-        """Process entire video with compression and detection - SEQUENTIAL for 100% frame preservation."""
-        logger.info(f"🎥 Processing {self.stream_id}: {video_path} with compression + detection")
+        """
+        Process entire video in two stages for 100% frame preservation:
+        1) Compress the original input video and save it
+        2) Run detection on the compressed video and save the detected (also compressed) output
+        """
+        logger.info(f"🎥 Processing {self.stream_id}: {video_path} with COMPRESSION ➜ DETECTION")
         
         # Store video name for summary
         self.video_name = Path(video_path).name
         
-        # Open input video
-        cap = cv2.VideoCapture(video_path)
-        if not cap.isOpened():
+        # -------------------------------
+        # Stage 1: Compress original video
+        # -------------------------------
+        logger.info(f"💾 {self.stream_id}: Stage 1 - Compressing original video")
+
+        cap_original = cv2.VideoCapture(video_path)
+        if not cap_original.isOpened():
             logger.error(f"Cannot open video: {video_path}")
             return False
         
-        # Get video properties
-        fps = cap.get(cv2.CAP_PROP_FPS)
-        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        duration = total_frames / fps
+        # Get video properties from original
+        fps = cap_original.get(cv2.CAP_PROP_FPS)
+        width = int(cap_original.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap_original.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        total_frames = int(cap_original.get(cv2.CAP_PROP_FRAME_COUNT))
+        duration = total_frames / fps if fps > 0 else 0.0
         
         # Store for performance tracking
         self.total_frames = total_frames
@@ -385,82 +400,141 @@ class VideoStreamProcessor:
         
         logger.info(f"📊 {self.stream_id}: {width}x{height}, {fps}fps, {total_frames} frames, {duration:.2f}s")
         
-        # Setup video writers
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
         
-        # Detection video writer
-        if hasattr(self, 'detection_output_file'):
-            self.detection_writer = cv2.VideoWriter(str(self.detection_output_file), fourcc, fps, (width, height))
-            if not self.detection_writer.isOpened():
-                logger.error(f"Cannot create detection video writer: {self.detection_output_file}")
-                cap.release()
-                return False
-        
-        # Compressed video writer
+        # Compressed video writer (Stage 1 output)
         if hasattr(self, 'compressed_output_file'):
-            self.compressed_writer = cv2.VideoWriter(str(self.compressed_output_file), fourcc, fps, (width, height))
+            self.compressed_writer = cv2.VideoWriter(
+                str(self.compressed_output_file), fourcc, fps, (width, height)
+            )
             if not self.compressed_writer.isOpened():
                 logger.error(f"Cannot create compressed video writer: {self.compressed_output_file}")
+                cap_original.release()
+                return False
         
-        # Process all frames sequentially for 100% preservation
+        # Compress every frame from original and write to compressed video
         self.is_running = True
         self.start_time = time.time()
         frame_number = 0
         
         try:
             while True:
-                ret, frame = cap.read()
+                ret, frame = cap_original.read()
                 if not ret:
                     break
                 
                 frame_number += 1
                 
-                # Apply compression to frame
+                # Apply compression to frame (JPEG round‑trip)
                 compressed_frame = self._compress_frame(frame)
                 
-                # Perform detection on original frame
+                # Write only compressed frame in this stage
+                if self.compressed_writer and self.compressed_writer.isOpened():
+                    self.compressed_writer.write(compressed_frame)
+                
+                # Progress update for compression
+                if frame_number % 100 == 0 or frame_number == total_frames:
+                    elapsed = time.time() - self.start_time
+                    progress = (frame_number / total_frames) * 100 if total_frames > 0 else 0
+                    current_fps = frame_number / elapsed if elapsed > 0 else 0
+                    logger.info(f"💾 {self.stream_id} COMPRESSION: {frame_number}/{total_frames} ({progress:.1f}%) - {current_fps:.1f} fps")
+        
+        except Exception as e:
+            logger.error(f"Error during compression for {self.stream_id}: {e}")
+            cap_original.release()
+            if self.compressed_writer:
+                self.compressed_writer.release()
+            return False
+        
+        # Finish Stage 1
+        cap_original.release()
+        if self.compressed_writer:
+            self.compressed_writer.release()
+        
+        logger.info(f"✅ {self.stream_id}: Compression stage completed, output at {self.compressed_output_file}")
+        
+        # ---------------------------------------------
+        # Stage 2: Run detection on the compressed video
+        # ---------------------------------------------
+        logger.info(f"🔍 {self.stream_id}: Stage 2 - Running detection on compressed video")
+        
+        cap_compressed = cv2.VideoCapture(str(self.compressed_output_file))
+        if not cap_compressed.isOpened():
+            logger.error(f"Cannot open compressed video for detection: {self.compressed_output_file}")
+            return False
+        
+        # Use properties from compressed video (should match original)
+        det_fps = cap_compressed.get(cv2.CAP_PROP_FPS) or fps
+        det_width = int(cap_compressed.get(cv2.CAP_PROP_FRAME_WIDTH)) or width
+        det_height = int(cap_compressed.get(cv2.CAP_PROP_FRAME_HEIGHT)) or height
+        det_total_frames = int(cap_compressed.get(cv2.CAP_PROP_FRAME_COUNT)) or total_frames
+        
+        # Detection video writer (Stage 2 output)
+        if hasattr(self, 'detection_output_file'):
+            self.detection_writer = cv2.VideoWriter(
+                str(self.detection_output_file), fourcc, det_fps, (det_width, det_height)
+            )
+            if not self.detection_writer.isOpened():
+                logger.error(f"Cannot create detection video writer: {self.detection_output_file}")
+                cap_compressed.release()
+                return False
+        
+        # Reset counters for detection stage
+        self.frames_processed = 0
+        self.detections_count = 0
+        self.total_inference_time = 0.0
+        self.start_time = time.time()
+        frame_number = 0
+        
+        try:
+            while True:
+                ret, frame = cap_compressed.read()
+                if not ret:
+                    break
+                
+                frame_number += 1
+                
+                # Perform detection on the COMPRESSED frame
                 detections, inference_time = self.detector.detect_objects(frame)
                 self.detections_count += len(detections)
                 
                 # Track inference time
                 self.total_inference_time += inference_time
                 
-                # Visualize detections
+                # Visualize detections on the compressed frame
                 vis_frame = self.detector.visualize_detections(
-                    frame, detections, self.stream_id, frame_number, fps
+                    frame, detections, self.stream_id, frame_number, det_fps
                 )
                 
-                # Write frames to outputs
+                # Write detected (also compressed via VideoWriter) frame to output
                 if self.detection_writer and self.detection_writer.isOpened():
                     self.detection_writer.write(vis_frame)
                     self.frames_processed += 1
                 
-                if self.compressed_writer and self.compressed_writer.isOpened():
-                    self.compressed_writer.write(compressed_frame)
-                
-                # Progress update
-                if frame_number % 100 == 0 or frame_number == total_frames:
+                # Progress update for detection
+                if frame_number % 100 == 0 or frame_number == det_total_frames:
                     elapsed = time.time() - self.start_time
-                    progress = (frame_number / total_frames) * 100
+                    progress = (frame_number / det_total_frames) * 100 if det_total_frames > 0 else 0
                     current_fps = frame_number / elapsed if elapsed > 0 else 0
-                    logger.info(f"🎬 {self.stream_id}: {frame_number}/{total_frames} ({progress:.1f}%) - {current_fps:.1f} fps")
+                    logger.info(f"🎬 {self.stream_id} DETECTION: {frame_number}/{det_total_frames} ({progress:.1f}%) - {current_fps:.1f} fps")
         
         except Exception as e:
-            logger.error(f"Error processing {self.stream_id}: {e}")
-            return False
-        
-        finally:
-            cap.release()
+            logger.error(f"Error during detection for {self.stream_id}: {e}")
+            cap_compressed.release()
             if self.detection_writer:
                 self.detection_writer.release()
-            if self.compressed_writer:
-                self.compressed_writer.release()
+            return False
         
-        # Store performance metrics
+        # Finish Stage 2
+        cap_compressed.release()
+        if self.detection_writer:
+            self.detection_writer.release()
+        
+        # Store performance metrics for entire processing
         self.processing_duration = time.time() - self.start_time
         
-        # Verify output
-        return self._verify_output(total_frames)
+        # Verify outputs using the number of frames we expected from original
+        return self._verify_output(det_total_frames or total_frames)
     
     def _compress_frame(self, frame):
         """Apply compression to a single frame."""
@@ -650,18 +724,52 @@ class E2EPipeline:
             raise
     
     def _setup_output_directories(self):
-        """Create necessary output directories."""
-        output_config = self.config.get('output', {})
+        """Create necessary output directories.
+        
+        The structure is:
+            output/
+              YYYYMMDD_HHMMSS/        <- one folder per run
+                compressed/
+                detections/
+                frames/
+        
+        This makes it easy to see which results belong to which run and
+        compare them later.
+        """
+        output_config = self.config.setdefault('output', {})
+        
+        # Base output root (e.g. "output")
+        base_root = Path(output_config.get('base_path', 'output'))
+        
+        # Per‑run timestamp folder, e.g. "output/20251202_153045"
+        run_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        run_root = base_root / run_timestamp
+        
+        # Persist for later reference if needed (e.g. logging, MLflow tags)
+        output_config['base_path'] = str(run_root)
+        output_config.setdefault('run_timestamp', run_timestamp)
+        
+        # Sub‑directories for this run
+        compressed_dir = run_root / 'compressed'
+        detections_dir = run_root / 'detections'
+        frames_dir = run_root / 'frames'
+        
+        # Update config so all downstream components use the per‑run paths
+        output_config.setdefault('compressed_videos_path', str(compressed_dir))
+        output_config.setdefault('detection_videos_path', str(detections_dir))
+        output_config.setdefault('frames_path', str(frames_dir))
+        
+        # Directories to ensure exist on disk
         directories = [
-            output_config.get('base_path', 'output'),
-            output_config.get('compressed_videos_path', 'output/compressed'),
-            output_config.get('detection_videos_path', 'output/detections'),
-            output_config.get('frames_path', 'output/frames'),
-            'logs'
+            run_root,
+            compressed_dir,
+            detections_dir,
+            frames_dir,
+            Path('logs')
         ]
         
         for directory in directories:
-            Path(directory).mkdir(parents=True, exist_ok=True)
+            directory.mkdir(parents=True, exist_ok=True)
     
     def _initialize_components(self, enable_mlflow: bool):
         """Initialize pipeline components."""

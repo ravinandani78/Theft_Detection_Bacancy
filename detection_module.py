@@ -69,17 +69,27 @@ class ObjectDetector:
         Returns:
             Path to the model file
         """
-        # If explicit model path exists, use it
+        # If explicit model path is provided, it MUST exist on disk
         if model_name:
             model_path = Path(model_name)
+            # Allow absolute or relative explicit path
             if model_path.exists():
+                logger.info(f"Using explicit model path from config: {model_path}")
                 return str(model_path)
-            # If relative path doesn't exist, try within configured directory
+            # Or look for that filename strictly inside the configured model directory
             model_path = self.model_directory / model_path.name
             if model_path.exists():
+                logger.info(f"Using model from configured directory: {model_path}")
                 return str(model_path)
+            
+            # Do NOT fall back to any built‑in YOLO model names
+            raise FileNotFoundError(
+                f"Configured model '{model_name}' not found. "
+                f"Expected at '{model_name}' or '{self.model_directory / Path(model_name).name}'. "
+                "Only local .pt files from the configured model directory are allowed."
+            )
         
-        # Auto-discover first .pt file in configured directory
+        # No explicit name: auto-discover first .pt file strictly within configured directory
         if self.model_directory.exists():
             pt_files = sorted(self.model_directory.glob('*.pt'))
             if pt_files:
@@ -87,13 +97,10 @@ class ObjectDetector:
                 logger.info(f"Auto-detected model in directory {self.model_directory}: {model_file}")
                 return str(model_file)
         
-        # Fallback: if nothing found, return the original name or raise error
-        if model_name:
-            return model_name
-        
+        # Nothing found in the directory and no explicit name
         raise FileNotFoundError(
-            "No model file found. Please ensure a .pt model file exists in the 'model' folder "
-            "or specify the model path in config.yaml"
+            f"No model file found in directory '{self.model_directory}'. "
+            "Please place a .pt weights file there or set model.name to an existing local path."
         )
     
     def _load_model(self):
