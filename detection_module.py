@@ -37,8 +37,10 @@ class ObjectDetector:
         self.output_config = config.get('output', {})
         self.performance_config = config.get('performance', {})
         
-        # Model parameters
-        self.model_name = self.model_config.get('name', 'yolo11s.pt')
+        # Model parameters - track model directory instead of specific filename
+        self.model_directory = Path(self.model_config.get('directory', 'model'))
+        model_name_config = self.model_config.get('name')
+        self.model_path = self._find_model_path(model_name_config)
         self.device = self.model_config.get('device', 'cuda' if torch.cuda.is_available() else 'cpu')
         self.confidence_threshold = self.model_config.get('confidence_threshold', 0.5)
         self.iou_threshold = self.model_config.get('iou_threshold', 0.45)
@@ -55,12 +57,57 @@ class ObjectDetector:
         
         self._load_model()
         self._setup_visualization()
+    
+    def _find_model_path(self, model_name: Optional[str] = None) -> str:
+        """
+        Resolve the model file path. If a specific name isn't supplied, automatically
+        use the first .pt file found within the configured model directory.
         
+        Args:
+            model_name: Model name or path from config
+            
+        Returns:
+            Path to the model file
+        """
+        # If explicit model path is provided, it MUST exist on disk
+        if model_name:
+            model_path = Path(model_name)
+            # Allow absolute or relative explicit path
+            if model_path.exists():
+                logger.info(f"Using explicit model path from config: {model_path}")
+                return str(model_path)
+            # Or look for that filename strictly inside the configured model directory
+            model_path = self.model_directory / model_path.name
+            if model_path.exists():
+                logger.info(f"Using model from configured directory: {model_path}")
+                return str(model_path)
+            
+            # Do NOT fall back to any built‑in YOLO model names
+            raise FileNotFoundError(
+                f"Configured model '{model_name}' not found. "
+                f"Expected at '{model_name}' or '{self.model_directory / Path(model_name).name}'. "
+                "Only local .pt files from the configured model directory are allowed."
+            )
+        
+        # No explicit name: auto-discover first .pt file strictly within configured directory
+        if self.model_directory.exists():
+            pt_files = sorted(self.model_directory.glob('*.pt'))
+            if pt_files:
+                model_file = pt_files[0]
+                logger.info(f"Auto-detected model in directory {self.model_directory}: {model_file}")
+                return str(model_file)
+        
+        # Nothing found in the directory and no explicit name
+        raise FileNotFoundError(
+            f"No model file found in directory '{self.model_directory}'. "
+            "Please place a .pt weights file there or set model.name to an existing local path."
+        )
+    
     def _load_model(self):
         """Load YOLOv11 model."""
         try:
-            logger.info(f"Loading YOLOv11 model: {self.model_name}")
-            self.model = YOLO(self.model_name)
+            logger.info(f"Loading YOLOv11 model from: {self.model_path}")
+            self.model = YOLO(self.model_path)
             
             # Move model to specified device
             if self.device != 'cpu':
@@ -72,7 +119,7 @@ class ObjectDetector:
             logger.info(f"Number of classes: {len(self.class_names)}")
             
         except Exception as e:
-            logger.error(f"Failed to load model {self.model_name}: {e}")
+            logger.error(f"Failed to load model {self.model_path}: {e}")
             raise
     
     def _setup_visualization(self):
