@@ -39,11 +39,8 @@ model:
   directory: model  # Folder containing the latest YOLO model checkpoint (.pt)
 output:
   base_path: output
-  compressed_videos_path: output/compressed
-  detection_videos_path: output/detections
   display_realtime: true
   fps_overlay: true
-  frames_path: output/frames
   save_detection_videos: true
   save_compressed_videos: true  # Enable saving compressed videos
   save_sample_frames: true

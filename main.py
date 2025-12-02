@@ -754,10 +754,10 @@ class E2EPipeline:
         detections_dir = run_root / 'detections'
         frames_dir = run_root / 'frames'
         
-        # Update config so all downstream components use the per‑run paths
-        output_config.setdefault('compressed_videos_path', str(compressed_dir))
-        output_config.setdefault('detection_videos_path', str(detections_dir))
-        output_config.setdefault('frames_path', str(frames_dir))
+        # Update config so all downstream components use the per‑run paths.
+        output_config['compressed_videos_path'] = str(compressed_dir)
+        output_config['detection_videos_path'] = str(detections_dir)
+        output_config['frames_path'] = str(frames_dir)
         
         # Directories to ensure exist on disk
         directories = [
@@ -777,7 +777,7 @@ class E2EPipeline:
             # Only initialize MLflow logger - each processor creates its own detector
             self.mlflow_logger = MLflowLogger(self.config, enabled=enable_mlflow)
             logger.info("✅ Pipeline components initialized (detectors created per stream)")
-        except Exception as e:
+        except Exception as e:  
             logger.error(f"Failed to initialize components: {e}")
             raise
     
